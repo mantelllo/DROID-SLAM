@@ -60,7 +60,7 @@ if __name__ == '__main__':
     parser.add_argument("--datapath")
     parser.add_argument("--gt_path")
 
-    parser.add_argument("--weights", default="droid.pth")
+    parser.add_argument("--path", default="droid.pth")
     parser.add_argument("--buffer", type=int, default=1000)
     parser.add_argument("--image_size", default=[384,512])
     parser.add_argument("--stereo", action="store_true")

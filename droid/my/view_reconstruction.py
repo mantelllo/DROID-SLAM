@@ -13,6 +13,7 @@ from lietorch import SE3
 
 from cuda_timer import CudaTimer
 
+
 def view_reconstruction(filename: str, filter_thresh = 0.005, filter_count=2):
     reconstruction_blob = torch.load(filename)
     images = reconstruction_blob["images"].cuda()[...,::2,::2]

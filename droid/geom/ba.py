@@ -2,8 +2,8 @@ import lietorch
 import torch
 import torch.nn.functional as F
 
-from .chol import block_solve, schur_solve
-import geom.projective_ops as pops
+from droid.geom.chol import block_solve, schur_solve
+import droid.geom.projective_ops as pops
 
 from torch_scatter import scatter_sum
 

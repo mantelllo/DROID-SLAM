@@ -30,5 +30,3 @@ class ConvGRU(nn.Module):
 
         net = (1-z) * net + z * q
         return net
-
-

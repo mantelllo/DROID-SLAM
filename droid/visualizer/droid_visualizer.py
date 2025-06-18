@@ -10,7 +10,7 @@ from moderngl_window.opengl.vao import VAO
 
 import numpy as np
 from .camera import OrbitDragCameraWindow
-from align import align_pose_fragements
+from ..align import align_pose_fragements
 
 CAM_POINTS = 0.05 * np.array(
     [
@@ -38,33 +38,6 @@ for i, j in CAM_LINES:
 CAM_SEGMENTS = np.stack(CAM_SEGMENTS, axis=0)
 
 
-def merge_depths_and_poses(depth_video1, depth_video2):
-    t1 = depth_video1.counter.value
-    t2 = depth_video2.counter.value
-
-    poses1 = depth_video1.poses[:max(t1, t2)].clone()
-    poses2 = depth_video2.poses[:max(t1, t2)].clone()
-
-    disps1 = depth_video1.disps[:max(t1, t2)].clone()
-    disps2 = depth_video2.disps[:max(t1, t2)].clone()
-
-    if t2 <= 0:
-        return poses1, disps1
-    
-    if t2 >= t1:
-        return poses2, disps2
-    
-    dP, s = align_pose_fragements(
-        poses1[max(0, t2-16): t2],
-        poses2[max(0, t2-16): t2],
-    )
-
-    poses1[..., :3] *= s
-
-    poses2[t2:] = (dP * SE3(poses1[t2:])).data
-    disps2[t2:] = disps1[t2:] / s
-
-    return poses2, disps2
 
 
 class DroidVisualizer(OrbitDragCameraWindow):
@@ -78,6 +51,9 @@ class DroidVisualizer(OrbitDragCameraWindow):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        if self._depth_video2 is not None:
+            raise NotImplementedError()
+
         self.wnd.mouse_exclusivity = False
 
         self.prog = self.ctx.program(
@@ -162,7 +138,6 @@ class DroidVisualizer(OrbitDragCameraWindow):
         cam_segments = CAM_SEGMENTS.astype("f4")
         cam_segments = np.tile(cam_segments, (n, 1))
 
-
         self.count = 0
 
         # Create a vertex array manually
@@ -187,7 +162,7 @@ class DroidVisualizer(OrbitDragCameraWindow):
         self.camera.mouse_sensitivity = 0.75
         self.camera.zoom = 1.0
 
-    def on_render(self, time: float, frame_time: float):
+    def render(self, time: float, frame_time: float):
         self.ctx.clear(1.0, 1.0, 1.0)
         self.ctx.enable(moderngl.DEPTH_TEST)
 
@@ -202,46 +177,44 @@ class DroidVisualizer(OrbitDragCameraWindow):
         t = self._depth_video1.counter.value
 
         if t > 12 and self.count % self._refresh_rate == 0:
-            images = self._depth_video1.images[:t, :, 4::8, 4::8]
-            intrinsics = self._depth_video1.intrinsics
-
-            if self._depth_video2 is not None:
-                poses, disps = merge_depths_and_poses(self._depth_video1, self._depth_video2)
-                poses = poses[:t]
-                disps = disps[:t]
-            else:
-                disps = self._depth_video1.disps[:t]
-                poses = self._depth_video1.poses[:t]
-
-            # 4x4 homogenous matrix
-            cam_pts = torch.from_numpy(CAM_SEGMENTS).cuda()
-            cam_pts = SE3(poses[:, None]).inv() * cam_pts[None]
-            cam_pts = cam_pts.reshape(-1, 3).cpu().numpy()
-
-            self.cam_buffer.write(cam_pts)
-
-            index = torch.arange(t, device="cuda")
-            thresh = self._filter_threshold * torch.ones_like(disps.mean(dim=[1, 2]))
-
-            points = droid_backends.iproj(SE3(poses).inv().data, disps, intrinsics[0])
-            colors = images[:, [2, 1, 0]].permute(0, 2, 3, 1) / 255.0
-
-            counts = droid_backends.depth_filter(
-                poses, disps, intrinsics[0], index, thresh
-            )
-            mask = (counts >= self._filter_count) & (disps > 0.25 * disps.mean())
-
-            valid = mask.float()
-
-            # wasteful (gpu -> cpu -> gpu)
-            self.pts_buffer.write(points.contiguous().cpu().numpy())
-            self.clr_buffer.write(colors.contiguous().cpu().numpy())
-            self.valid_buffer.write(valid.contiguous().cpu().numpy())
+            self.draw_frame__camera_frustums(t)
+            self.draw_frame__points(t)
 
         self.count += 1
         self.points.render(mode=moderngl.POINTS)
         self.cams.render(mode=moderngl.LINES)
 
+    def draw_frame__points(self, t):
+        images = self._depth_video1.images[:t, :, 4::8, 4::8]
+        intrinsics = self._depth_video1.intrinsics
+        disps = self._depth_video1.disps[:t]
+        poses = self._depth_video1.poses[:t]
+
+        index = torch.arange(t, device="cuda")
+        thresh = self._filter_threshold * torch.ones_like(disps.mean(dim=[1, 2]))
+        points = droid_backends.iproj(SE3(poses).inv().data, disps, intrinsics[0])
+        colors = images[:, [2, 1, 0]].permute(0, 2, 3, 1) / 255.0
+        # print('Points from DROID:', points[0,0,17,:])
+        counts = droid_backends.depth_filter(
+            poses, disps, intrinsics[0], index, thresh
+        )
+        mask = (counts >= self._filter_count) & (disps > 0.25 * disps.mean())
+        valid = mask.float()
+        # wasteful (gpu -> cpu -> gpu)
+        self.pts_buffer.write(points.contiguous().cpu().numpy())
+        self.clr_buffer.write(colors.contiguous().cpu().numpy())
+        self.valid_buffer.write(valid.contiguous().cpu().numpy())
+
+    def draw_frame__camera_frustums(self, t):
+        poses = self._depth_video1.poses[:t]
+
+        # 4x4 homogenous matrix
+        cam_pts = torch.from_numpy(CAM_SEGMENTS).cuda()
+        cam_pts = SE3(poses[:, None]).inv() * cam_pts[None]
+        cam_pts = cam_pts.reshape(-1, 3).cpu().numpy()
+        self.cam_buffer.write(cam_pts)
+
+    on_render = render
 
 def visualization_fn(depth_video1, depth_video2):
     config = DroidVisualizer

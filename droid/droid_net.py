@@ -1,22 +1,28 @@
+from functools import partial
+
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from collections import OrderedDict
 
-from modules.extractor import BasicEncoder
-from modules.corr import CorrBlock
-from modules.gru import ConvGRU
-from modules.clipping import GradientClip
+from droid.modules.extractor import BasicEncoder
+from droid.modules.corr import CorrBlock
+from droid.modules.gru import ConvGRU
+from droid.modules.clipping import GradientClip
+
+if torch.__version__.startswith("2"):
+    autocast = partial(torch.autocast, device_type="cuda")
+else:
+    autocast = torch.cuda.amp.autocast
 
 from lietorch import SE3
-from geom.ba import BA
+from droid.geom.ba import BA
 
-import geom.projective_ops as pops
-from geom.graph_utils import graph_to_edge_list, keyframe_indicies
+import droid.geom.projective_ops as pops
+from droid.geom.graph_utils import graph_to_edge_list, keyframe_indicies
 
 from torch_scatter import scatter_mean
-
 
 def cvx_upsample(data, mask):
     """ upsample pixel-wise transformation field """
@@ -108,8 +114,10 @@ class UpdateModule(nn.Module):
         self.gru = ConvGRU(128, 128+128+64)
         self.agg = GraphAgg()
 
+    @autocast(enabled=True)
     def forward(self, net, inp, corr, flow=None, ii=None, jj=None):
         """ RaftSLAM update operator """
+        torch.cuda.empty_cache()
 
         batch, num, ch, ht, wd = net.shape
 
@@ -150,6 +158,20 @@ class DroidNet(nn.Module):
         self.cnet = BasicEncoder(output_dim=256, norm_fn='none')
         self.update = UpdateModule()
 
+    @classmethod
+    def load(cls, path):
+        net = cls()
+        state_dict = OrderedDict([
+            (k.replace("module.", ""), v) for (k, v) in torch.load(path).items()])
+
+        state_dict["update.weight.2.weight"] = state_dict["update.weight.2.weight"][:2]
+        state_dict["update.weight.2.bias"] = state_dict["update.weight.2.bias"][:2]
+        state_dict["update.delta.2.weight"] = state_dict["update.delta.2.weight"][:2]
+        state_dict["update.delta.2.bias"] = state_dict["update.delta.2.bias"][:2]
+
+        net.load_state_dict(state_dict)
+        net.to("cuda:0").eval()
+        return net
 
     def extract_features(self, images):
         """ run feeature extraction networks """
@@ -167,7 +189,6 @@ class DroidNet(nn.Module):
         net = torch.tanh(net)
         inp = torch.relu(inp)
         return fmaps, net, inp
-
 
     def forward(self, Gs, images, disps, intrinsics, graph=None, num_steps=12, fixedp=2):
         """ Estimates SE3 or Sim3 between pair of frames """

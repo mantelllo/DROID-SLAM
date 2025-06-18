@@ -1,9 +1,12 @@
 import sys
-sys.path.append('droid_slam')
-
-from tqdm import tqdm
 import numpy as np
+import open3d as o3d
+from tqdm import tqdm
 import torch
+from scipy.spatial.transform import Rotation as R
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
+
 import lietorch
 import cv2
 import os
@@ -12,10 +15,67 @@ import time
 import argparse
 
 from torch.multiprocessing import Process
-from droid import Droid
-from droid_async import DroidAsync
+from droid.droid import Droid
+from droid.droid_async import DroidAsync
+from droid.droid_net import DroidNet
 
 import torch.nn.functional as F
+
+
+def main():
+    args = get_args()
+    if args.asynchronous:
+        raise NotImplementedError
+
+    args.stereo = False
+    args.disable_vis = False
+    torch.multiprocessing.set_start_method('spawn')
+    torch.autograd.set_grad_enabled(False)
+
+    droidnet = DroidNet.load(args.path)
+    droid = None # loaded with image size
+
+    # need high resolution depths
+    if args.reconstruction_path is not None:
+        args.upsample = True
+
+    poses = []
+
+    # from gui_viewer import start_viewer
+    # viewer = start_viewer()
+
+    for (t, image, intrinsics) in tqdm(image_stream(args.imagedir, args.calib, args.stride)):
+        if t < args.t0:
+            continue
+
+        if not args.disable_vis:
+            show_image(image[0])
+
+        if not droid:
+            h, w = args.image_size = [image.shape[2], image.shape[3]]
+            droid = Droid(droidnet, args)
+            droid.filterx.prepare_for_image_size(h, w, intrinsics)
+
+        poses, points = droid.track(t, image, intrinsics=intrinsics)
+        if poses is not None and len(poses[0]) > 0 and t > 12:
+            pcd = droid.points().detach().cpu().numpy()
+            # viewer.update(pcd, poses)
+
+        if t == 200:
+            # from vispy import scene, app
+            # app.run()
+            np.save('bench.npy', pcd)
+
+
+    t0 = time.time()
+    # traj_est = droid.terminate(image_stream(args.imagedir, args.calib, args.stride))
+    t1 = time.time()
+    duration = t1 - t0
+    print('duration of factor graph optimization:', duration)
+    # traj_est = droid.terminate()
+
+    if args.reconstruction_path is not None:
+        save_reconstruction(droid, args.reconstruction_path)
 
 
 def show_image(image):
@@ -36,6 +96,7 @@ def image_stream(imagedir, calib, stride):
     K[1,2] = cy
 
     image_list = sorted(os.listdir(imagedir))[::stride]
+    print('loading images', len(image_list))
 
     for t, imfile in enumerate(image_list):
         image = cv2.imread(os.path.join(imagedir, imfile))
@@ -76,23 +137,25 @@ def save_reconstruction(droid, save_path):
     torch.save(save_data, save_path)
 
 
-if __name__ == '__main__':
+def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--imagedir", type=str, help="path to image directory")
     parser.add_argument("--calib", type=str, help="path to calibration file")
     parser.add_argument("--t0", default=0, type=int, help="starting frame")
     parser.add_argument("--stride", default=3, type=int, help="frame stride")
 
-    parser.add_argument("--weights", default="droid.pth")
+    parser.add_argument("--path", default="droid.pth")
     parser.add_argument("--buffer", type=int, default=512)
     parser.add_argument("--image_size", default=[240, 320])
-    parser.add_argument("--disable_vis", action="store_true")
+    parser.add_argument("--disable_vis", action="store_true", default=False)
 
     parser.add_argument("--beta", type=float, default=0.3, help="weight for translation / rotation components of flow")
-    parser.add_argument("--filter_thresh", type=float, default=2.4, help="how much motion before considering new keyframe")
+    parser.add_argument("--filter_thresh", type=float, default=2.4,
+                        help="how much motion before considering new keyframe")
     parser.add_argument("--warmup", type=int, default=8, help="number of warmup frames")
     parser.add_argument("--keyframe_thresh", type=float, default=4.0, help="threshold to create a new keyframe")
-    parser.add_argument("--frontend_thresh", type=float, default=16.0, help="add edges between frames whithin this distance")
+    parser.add_argument("--frontend_thresh", type=float, default=16.0,
+                        help="add edges between frames whithin this distance")
     parser.add_argument("--frontend_window", type=int, default=25, help="frontend optimization window")
     parser.add_argument("--frontend_radius", type=int, default=2, help="force edges between frames within radius")
     parser.add_argument("--frontend_nms", type=int, default=1, help="non-maximal supression of edges")
@@ -104,34 +167,10 @@ if __name__ == '__main__':
     parser.add_argument("--asynchronous", action="store_true")
     parser.add_argument("--frontend_device", type=str, default="cuda")
     parser.add_argument("--backend_device", type=str, default="cuda")
-    
+
     parser.add_argument("--reconstruction_path", help="path to saved reconstruction")
-    args = parser.parse_args()
+    return parser.parse_args()
 
-    args.stereo = False
-    torch.multiprocessing.set_start_method('spawn')
 
-    droid = None
-
-    # need high resolution depths
-    if args.reconstruction_path is not None:
-        args.upsample = True
-
-    tstamps = []
-    for (t, image, intrinsics) in tqdm(image_stream(args.imagedir, args.calib, args.stride)):
-        if t < args.t0:
-            continue
-
-        if not args.disable_vis:
-            show_image(image[0])
-
-        if droid is None:
-            args.image_size = [image.shape[2], image.shape[3]]
-            droid = DroidAsync(args) if args.asynchronous else Droid(args)
-        
-        droid.track(t, image, intrinsics=intrinsics)
-
-    traj_est = droid.terminate(image_stream(args.imagedir, args.calib, args.stride))
-    
-    if args.reconstruction_path is not None:
-        save_reconstruction(droid, args.reconstruction_path)
+if __name__ == '__main__':
+    main()

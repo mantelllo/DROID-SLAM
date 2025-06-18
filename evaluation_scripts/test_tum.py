@@ -58,7 +58,7 @@ def image_stream(datapath):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--datapath")
-    parser.add_argument("--weights", default="droid.pth")
+    parser.add_argument("--path", default="droid.pth")
     parser.add_argument("--buffer", type=int, default=512)
     parser.add_argument("--image_size", default=[240, 320])
     parser.add_argument("--disable_vis", action="store_true")

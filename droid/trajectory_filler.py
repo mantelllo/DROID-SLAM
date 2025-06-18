@@ -4,9 +4,9 @@ import lietorch
 
 from lietorch import SE3
 from collections import OrderedDict
-from factor_graph import FactorGraph
-from droid_net import DroidNet
-import geom.projective_ops as pops
+from .factor_graph import FactorGraph
+from .droid_net import DroidNet
+from .geom import projective_ops as pops
 
 from functools import partial
 
@@ -46,7 +46,8 @@ class PoseTrajectoryFiller:
         images = torch.stack(images, 0).cuda()
         intrinsics = torch.stack(intrinsics, 0)
         inputs = images[:,:,[2,1,0]].to(self.device) / 255.0
-        
+
+        ### fills MISSING (culled) poses
         ### linear pose interpolation ###
         N = self.video.counter.value
         M = len(tstamps)
@@ -93,7 +94,7 @@ class PoseTrajectoryFiller:
         tstamps = []
         images = []
         intrinsics = []
-        
+
         for (tstamp, image, intrinsic) in image_stream:
             tstamps.append(tstamp)
             images.append(image)

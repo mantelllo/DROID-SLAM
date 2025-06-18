@@ -2,12 +2,14 @@ import numpy as np
 import torch
 import lietorch
 import droid_backends
+from hashlib import sha256
+
 
 from torch.multiprocessing import Process, Queue, Lock, Value
 from collections import OrderedDict
 
-from droid_net import cvx_upsample
-import geom.projective_ops as pops
+from droid.droid_net import cvx_upsample
+from .geom import projective_ops as pops
 
 class DepthVideo:
     def __init__(self, image_size=[480, 640], buffer=1024, stereo=False, device="cuda:0"):
@@ -18,6 +20,9 @@ class DepthVideo:
         self.ht = ht = image_size[0]
         self.wd = wd = image_size[1]
 
+        self.ht_div8 = self.special_div8(ht)
+        self.wd_div8 = self.special_div8(wd)
+
         ### state attributes ###
         self.tstamp = torch.zeros(buffer, device=device, dtype=torch.float).share_memory_()
         self.images = torch.zeros(buffer, 3, ht, wd, device=device, dtype=torch.uint8)
@@ -26,20 +31,22 @@ class DepthVideo:
         self.poses = torch.zeros(buffer, 7, device=device, dtype=torch.float).share_memory_()
         self.disps = torch.ones(buffer, ht//8, wd//8, device=device, dtype=torch.float).share_memory_()
         self.disps_sens = torch.zeros(buffer, ht//8, wd//8, device=device, dtype=torch.float).share_memory_()
-        self.disps_up = torch.zeros(buffer, ht, wd, device=device, dtype=torch.float).share_memory_()
+        # self.disps_up = torch.zeros(buffer, ht, wd, device=device, dtype=torch.float).share_memory_()
         self.intrinsics = torch.zeros(buffer, 4, device=device, dtype=torch.float).share_memory_()
 
         self.stereo = stereo
         c = 1 if not self.stereo else 2
 
-        ### feature attributes ###
-        self.fmaps = torch.zeros(buffer, c, 128, ht//8, wd//8, dtype=torch.half, device=device).share_memory_()
-        self.nets = torch.zeros(buffer, 128, ht//8, wd//8, dtype=torch.half, device=device).share_memory_()
-        self.inps = torch.zeros(buffer, 128, ht//8, wd//8, dtype=torch.half, device=device).share_memory_()
+        self.fmaps = torch.zeros(buffer, c, 128, self.ht_div8, self.wd_div8, dtype=torch.half, device=device).share_memory_()
+        self.nets = torch.zeros(buffer, 128, self.ht_div8, self.wd_div8, dtype=torch.half, device=device).share_memory_()
+        self.inps = torch.zeros(buffer, 128, self.ht_div8, self.wd_div8, dtype=torch.half, device=device).share_memory_()
 
         # initialize poses to identity transformation
         self.poses[:] = torch.as_tensor([0, 0, 0, 0, 0, 0, 1], dtype=torch.float, device=device)
-        
+
+    def special_div8(self, v):
+        return v // 8
+
     def to(self, device="cuda"):
         self.tstamp = self.tstamp.to(device=device)
         self.images = self.images.to(device=device)
@@ -59,26 +66,52 @@ class DepthVideo:
 
     def __del__(self):
         # delete all tensors
-        del self.tstamp
-        del self.images
-        del self.dirty
-        del self.red
-        del self.poses
-        del self.disps
-        del self.disps_sens
-        del self.disps_up
-        del self.intrinsics
-        del self.fmaps
-        del self.nets
-        del self.inps
+        if hasattr(self, "tstamp"):
+            del self.tstamp
+            del self.images
+            del self.dirty
+            del self.red
+            del self.poses
+            del self.disps
+            del self.disps_sens
+            # del self.disps_up
+            del self.intrinsics
+            del self.fmaps
+            del self.nets
+            del self.inps
 
     def get_lock(self):
         return self.counter.get_lock()
 
     def __item_setter(self, index, item):
+        item = list(item)
+
+        # if index == 5:
+        #     repr_ = [sha256(item_.cpu().numpy().tobytes()).hexdigest()
+        #              if isinstance(item_, torch.Tensor) else item_ for item_ in item]
+
+        if item[7].ndim == 4:
+            if item[7].shape[0] != 1:
+                raise ValueError
+            item[7] = item[7].squeeze(0)
+
+        if item[8].ndim == 4:
+            if item[8].shape[0] != 1:
+                raise ValueError
+            item[8] = item[8].squeeze(0)
+
+        assert item[1].shape == self.images.shape[1:]
+        assert item[2] is None or item[2].shape == self.poses.shape[1:]
+        assert item[3] is None or isinstance(item[3], float) or item[3].shape == self.disps.shape[1:]
+        assert item[4] is None or item[4].shape == self.disps_sens.shape[1:]
+        assert item[5].shape == self.intrinsics.shape[1:]
+        assert item[6].shape == self.fmaps.shape[1:]
+        assert item[7].shape == self.nets.shape[1:]
+        assert item[8].shape == self.inps.shape[1:]
+
         if isinstance(index, int) and index >= self.counter.value:
             self.counter.value = index + 1
-        
+
         elif isinstance(index, torch.Tensor) and index.max().item() > self.counter.value:
             self.counter.value = index.max().item() + 1
 
@@ -133,6 +166,7 @@ class DepthVideo:
     def append(self, *item):
         with self.get_lock():
             self.__item_setter(self.counter.value, item)
+            return self.counter.value
 
 
     ### geometric operations ###

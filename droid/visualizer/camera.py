@@ -1,5 +1,5 @@
 import time
-from typing import Any, Optional, Union
+from typing import Any, Optional, Union, Tuple
 
 import glm
 from glm import cos, radians, sin
@@ -11,9 +11,9 @@ from moderngl_window.scene.camera import Camera
 class OrbitCamera(Camera):
     def __init__(
         self,
-        target: Union[glm.vec3, tuple[float, float, float]] = (0.0, 0.0, 0.0),
+        target: Union[glm.vec3, Tuple[float, float, float]] = (0.0, 0.0, 0.0),
         radius: float = 2.0,
-        angles: tuple[float, float] = (60.0, -100.0),
+        angles: Tuple[float, float] = (60.0, -100.0),
         **kwargs: Any,
     ):
         self.radius = radius  # radius in base units
@@ -87,23 +87,23 @@ class OrbitDragCameraWindow(moderngl_window.WindowConfig):
         super().__init__(**kwargs)
         self.camera = OrbitCamera(aspect_ratio=self.wnd.aspect_ratio)
 
-    def on_key_event(self, key, action, modifiers):
+    def key_event(self, key, action, modifiers):
         keys = self.wnd.keys
 
         if action == keys.ACTION_PRESS:
             if key == keys.SPACE:
                 self.timer.toggle_pause()
 
-    def on_mouse_drag_event(self, x: int, y: int, dx: float, dy: float):
+    def mouse_drag_event(self, x: int, y: int, dx: float, dy: float):
         mb = self.wnd.mouse_states
         if mb.right:                         # ← right‑button drag → pan
             self.camera.pan_state(dx, dy)
         else:                                # ← left‑button drag → orbit
             self.camera.rot_state(dx, dy)
     
-    def on_mouse_scroll_event(self, x_offset: float, y_offset: float):
+    def mouse_scroll_event(self, x_offset: float, y_offset: float):
         self.camera.zoom_state(y_offset)
 
-    def on_resize(self, width: int, height: int):
+    def resize(self, width: int, height: int):
         self.camera.projection.update(aspect_ratio=self.wnd.aspect_ratio)
 
