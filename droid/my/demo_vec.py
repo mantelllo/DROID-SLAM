@@ -1,3 +1,13 @@
+import multiprocessing as mp
+import torch.multiprocessing as tmp
+
+for ctx in (mp, tmp):          # stdlib and Torch wrapper
+    try:
+        ctx.set_start_method("spawn", force=True)
+    except RuntimeError:
+        pass                   # start-method was already set
+
+
 import sys
 import numpy as np
 import open3d as o3d
@@ -24,10 +34,11 @@ def main():
 
     args.stereo = False
     args.disable_vis = False
-    torch.multiprocessing.set_start_method('spawn')
+    # torch.multiprocessing.set_start_method('fork', force=True)
     torch.autograd.set_grad_enabled(False)
 
-    droidvec = VectorDroid(5, args, None)
+    num_instances = 5
+    droidvec = VectorDroid(num_instances, args, None)
 
     poses = []
 
@@ -49,6 +60,9 @@ def main():
         pcd = points[0]
         # if poses is not None and len(poses[0]) > 0 and t > 12:
         #     viewer.update(points[0], poses[0])
+
+        if t % 10:
+            print(f'[{t}] lengths:::', len(points[0]))
 
         if t == 200:
             from vispy import scene, app
@@ -110,7 +124,7 @@ def save_reconstruction(droid, save_path):
     else:
         video = droid.video
 
-    t = video.counter.value
+    t = video.counter
     save_data = {
         "tstamps": video.tstamp[:t].cpu(),
         "images": video.images[:t].cpu(),

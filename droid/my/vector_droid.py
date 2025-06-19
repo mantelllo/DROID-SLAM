@@ -4,7 +4,12 @@ from typing import List, Optional, Tuple
 import lietorch
 import numpy as np
 import torch
+import time
 
+import torch.multiprocessing as mp
+from torch.multiprocessing.pool import Pool
+
+from droid.depth_video import DepthVideo
 from droid.droid import Droid
 from droid.droid_net import DroidNet
 
@@ -12,7 +17,6 @@ if torch.__version__.startswith("2"):
     autocast = partial(torch.autocast, device_type="cuda")
 else:
     autocast = torch.cuda.amp.autocast
-
 
 
 class VectorDroid:
@@ -29,6 +33,9 @@ class VectorDroid:
         self.device = args.backend_device
         self.droids = []
         self.intrinsics = intrinsics  # camera's intrinsics: [fx, fy, cx, cy]
+        self.duration_total_async = 0
+        self.duration_frontend = 0
+        self.pool = None
 
     @autocast(enabled=True)
     def track(self, tstamp, images) -> Tuple[List[lietorch.SE3], List[torch.Tensor]]:
@@ -60,6 +67,9 @@ class VectorDroid:
         it = partial(range, 0, len(images))
         filterx = lambda i: self.droids[i].filterx
 
+        for i in it():
+            self.droids[i].activated = True
+
         corrs = torch.stack([filterx(i).corr(fmaps1[i]) for i in it()]).squeeze(1).half()
         nets0 = torch.stack([getattr(filterx(i), 'net', nets1[i]) for i in it()]).half()
         inps0 = torch.stack([getattr(filterx(i), 'inp', inps1[i]) for i in it()]).half()
@@ -68,22 +78,50 @@ class VectorDroid:
             assert nets0.ndim == 5
             _, deltas, weights = self.net.update(nets0, inps0, corrs)
 
+        t0 = time.time()
+        added = self.add_keyframes_if_meets_conditions(images, tstamp, fmaps1, nets1, inps1, deltas, weights)
+        t1 = time.time()
+        self.frontend(added)
+        t2 = time.time()
+        poses, points = self.collect_status()
+        t3 = time.time()
+
+        duration_frontend = t2 - t1
+        duration_total_async = t3 - t0
+        self.duration_frontend += duration_frontend
+        self.duration_total_async += duration_total_async
+
+        print(f'Track durations::\n'
+              f' - duration_frontend {duration_frontend:.2f}s [cum {self.duration_frontend:.2f}s]]\n'
+              # f' - duration_total_async {duration_total_async:.2f}s [cum {self.duration_total_async:.2f}s]'
+              )
+
+        return poses, points
+
+    def collect_status(self):
+        poses = []
+        points = []
+
+        for d in self.droids:
+            if not d.activated:
+                continue
+
+            poses.append(d.get_poses())
+            points.append(d.get_points())
+
+        poses = torch.stack(poses).squeeze(1)
+        return poses, points
+
+    def add_keyframes_if_meets_conditions(self, images, tstamp, fmaps1, nets1, inps1, deltas, weights):
+        addeds = []
         for i in range(len(images)):
-            if tstamp == 7 and i == 0:
-                print(' inside: ', i)
+            filterx = self.droids[i].filterx
             feats = fmaps1[i], nets1[i], inps1[i]
             corr_vars = deltas[i], weights[i]
-            image = images[i]
+            added = filterx.add_keyframe_if_meets_condition(images[i], tstamp, *feats, *corr_vars)
+            addeds.append(added)
 
-            filterx = self.droids[i].filterx
-            added = filterx.add_keyframe_if_meets_condition(image, tstamp, *feats, *corr_vars)
-            if added:
-                with torch.no_grad():
-                    self.droids[i].frontend()
-
-        poses = [self.droids[i].get_poses() for i in it()]
-        points = [self.droids[i].points() for i in it()]
-        return poses, points
+        return addeds
 
     def reset_terminated_envs(self, termination_tensor):
         if any(termination_tensor):
@@ -109,6 +147,40 @@ class VectorDroid:
 
     def __len__(self):
         return self.num_instances
+
+    def frontend(self, was_frame_added__vector):
+        frontends = [d.frontend for d in self.droids if d.activated]
+        data = list(enumerate(was_frame_added__vector))
+
+        for item in data:
+            idx, added = item
+            if added:
+                with torch.no_grad():
+                    frontends[idx]()
+
+        # if self.pool is None:
+        #     ctx = mp.get_context("spawn")  # always spawn
+        #     self.pool = ctx.Pool(
+        #         processes=len(frontends),
+        #         initializer=init__frontend,     # ← no lambda
+        #         initargs=(frontends,)           # sent only once
+        # )
+        #
+        # self.pool.map(worker__frontend, data)
+
+
+__frontends = []
+def init__frontend(frontends):
+    global __frontends
+    __frontends = frontends
+
+
+def worker__frontend(item):
+    idx, added = item
+    if added:
+        with torch.no_grad():
+            __frontends[idx]()          # uses its own CUDA buffers
+        torch.cuda.empty_cache()        # free scratch space
 
 
 def extract_intrinsics_from_proj_matrix(P, width, height):

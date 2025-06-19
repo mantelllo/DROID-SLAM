@@ -47,11 +47,11 @@ class CorrBlock:
             corr = CorrSampler.apply(self.corr_pyramid[i], coords/2**i, self.radius)
             out_pyramid.append(corr.view(batch, num, -1, ht, wd))
 
-        return torch.cat(out_pyramid, dim=2)
+        return torch.cat(out_pyramid, dim=2).share_memory_()
 
     def cat(self, other):
         for i in range(self.num_levels):
-            self.corr_pyramid[i] = torch.cat([self.corr_pyramid[i], other.corr_pyramid[i]], 0)
+            self.corr_pyramid[i] = torch.cat([self.corr_pyramid[i], other.corr_pyramid[i]], 0).share_memory_()
         return self
 
     def __getitem__(self, index):
@@ -68,7 +68,7 @@ class CorrBlock:
         fmap2 = fmap2.reshape(batch*num, dim, ht*wd) / 4.0
         
         corr = torch.matmul(fmap1.transpose(1,2), fmap2)
-        return corr.view(batch, num, ht, wd, ht, wd)
+        return corr.view(batch, num, ht, wd, ht, wd).share_memory_()
 
 
 class CorrLayer(torch.autograd.Function):
@@ -77,7 +77,7 @@ class CorrLayer(torch.autograd.Function):
         ctx.r = r
         ctx.save_for_backward(fmap1, fmap2, coords, ii, jj)
         corr, = droid_backends.altcorr_forward(fmap1, fmap2, coords, ii, jj, ctx.r)
-        return corr
+        return corr.share_memory_()
 
     @staticmethod
     def backward(ctx, grad_corr):

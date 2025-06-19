@@ -30,6 +30,7 @@ def main():
     args.stereo = False
     args.disable_vis = False
     torch.multiprocessing.set_start_method('spawn')
+    # torch.multiprocessing.set_start_method('fork', force=True)
     torch.autograd.set_grad_enabled(False)
 
     droidnet = DroidNet.load(args.path)
@@ -58,8 +59,11 @@ def main():
 
         poses, points = droid.track(t, image, intrinsics=intrinsics)
         if poses is not None and len(poses[0]) > 0 and t > 12:
-            pcd = droid.points().detach().cpu().numpy()
+            pcd = droid.get_points().detach().cpu().numpy()
             # viewer.update(pcd, poses)
+
+        if t % 10:
+            print(f'[{t}] lengths:::', len(points))
 
         if t == 200:
             # from vispy import scene, app
@@ -111,7 +115,7 @@ def image_stream(imagedir, calib, stride):
         image = image[:h1-h1%8, :w1-w1%8]
         image = torch.as_tensor(image).permute(2, 0, 1)
 
-        intrinsics = torch.as_tensor([fx, fy, cx, cy])
+        intrinsics = torch.as_tensor([fx, fy, cx, cy]).float().cuda()
         intrinsics[0::2] *= (w1 / w0)
         intrinsics[1::2] *= (h1 / h0)
 
@@ -125,7 +129,7 @@ def save_reconstruction(droid, save_path):
     else:
         video = droid.video
 
-    t = video.counter.value
+    t = video.counter
     save_data = {
         "tstamps": video.tstamp[:t].cpu(),
         "images": video.images[:t].cpu(),

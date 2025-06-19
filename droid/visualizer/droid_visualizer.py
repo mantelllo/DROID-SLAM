@@ -174,7 +174,7 @@ class DroidVisualizer(OrbitDragCameraWindow):
         self.cam_prog["m_proj"].write(self.camera.projection.matrix)
         self.cam_prog["m_cam"].write(self.camera.matrix)
 
-        t = self._depth_video1.counter.value
+        t = self._depth_video1.counter
 
         if t > 12 and self.count % self._refresh_rate == 0:
             self.draw_frame__camera_frustums(t)
@@ -216,10 +216,11 @@ class DroidVisualizer(OrbitDragCameraWindow):
 
     on_render = render
 
-def visualization_fn(depth_video1, depth_video2):
+
+def visualization_fn(video1, video2):
     config = DroidVisualizer
-    config._depth_video1 = depth_video1
-    config._depth_video2 = depth_video2
+    config._depth_video1 = video1
+    config._depth_video2 = video2
 
     # run visualizer
     moderngl_window.run_window_config(config, args=["-r", "True"])

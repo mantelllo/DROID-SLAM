@@ -49,7 +49,7 @@ class PoseTrajectoryFiller:
 
         ### fills MISSING (culled) poses
         ### linear pose interpolation ###
-        N = self.video.counter.value
+        N = self.video.counter
         M = len(tstamps)
 
         ts = self.video.tstamp[:N]
@@ -69,7 +69,7 @@ class PoseTrajectoryFiller:
         inputs = inputs.sub_(self.MEAN).div_(self.STDV)
         fmap = self.__feature_encoder(inputs)
 
-        self.video.counter.value += M
+        self.video.counter += M
         self.video[N:N+M] = (tt, images[:,0], Gs.data, 1, None, intrinsics / 8.0, fmap)
 
         graph = FactorGraph(self.video, self.update)
@@ -80,7 +80,7 @@ class PoseTrajectoryFiller:
             graph.update(N, N+M, motion_only=True)
     
         Gs = SE3(self.video.poses[N:N+M].clone())
-        self.video.counter.value -= M
+        self.video.counter -= M
 
         return [ Gs ]
 

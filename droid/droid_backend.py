@@ -25,7 +25,7 @@ class DroidBackend:
     def __call__(self, steps=12, normalize=True):
         """ main update """
 
-        t = self.video.counter.value
+        t = self.video.counter
         if normalize:
             if not self.video.stereo and not torch.any(self.video.disps_sens):
                 self.video.normalize()
@@ -70,7 +70,7 @@ class DroidAsyncBackend:
     def __call__(self, steps=12, normalize=True):
         """main update"""
 
-        t = self.video.counter.value
+        t = self.video.counter
         if normalize:
             if not self.video.stereo and not torch.any(self.video.disps_sens):
                 self.video.normalize()

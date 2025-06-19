@@ -41,11 +41,14 @@ class Droid:
         # visualizer
         if not self.disable_vis:
             from .visualizer.droid_visualizer import visualization_fn
-            self.visualizer = Process(target=visualization_fn, args=(self.video, None))
+            self.visualizer = Process(
+                target=visualization_fn, args=(self.video, None),)
             self.visualizer.start()
 
         # post processor - fill in poses for non-keyframes
         self.traj_filler = PoseTrajectoryFiller(self.net, self.video)
+
+        self.activated = False
 
     def track(self, tstamp, image, depth=None, intrinsics=None) -> Tuple[Optional[lietorch.SE3], Optional[torch.Tensor]]:
         """ main thread - update map """
@@ -58,16 +61,19 @@ class Droid:
                 # local bundle adjustment
                 self.frontend()
 
-        N = self.video.counter.value
+        N = self.video.counter
         if N == 0:
             return None, None
 
         poses = self.get_poses()
-        points = self.points()
+        points = self.get_points()
+
+        self.activated = True
+
         return poses, points
 
     def get_poses(self):
-        N = self.video.counter.value
+        N = self.video.counter
         return self.video.poses[:N]
 
     def terminate(self, stream=None):
@@ -86,32 +92,5 @@ class Droid:
         camera_trajectory = self.traj_filler(stream)
         return camera_trajectory.inv().data.cpu().numpy()
 
-    def points(self):
-        t = self.video.counter.value
-        # if t > 15:
-        #     print()
-
-        poses = self.video.poses[:t].contiguous().cuda()
-        images = self.video.images[:t, :, 4::8, 4::8].contiguous().cuda()
-        disps = self.video.disps[:t].contiguous().cuda()
-        intrinsics = self.video.intrinsics.contiguous().cuda()
-
-        points = droid_backends.iproj(lietorch.SE3(poses).inv().data, disps, intrinsics[0]).reshape(-1, 3)
-        colors = (images[:, [0,1,2]].permute(0, 2, 3, 1) / 255.0).reshape(-1, 3)
-
-        filter_threshold = 0.01
-        filter_count = 2
-
-        index = torch.arange(t, device="cuda")
-        thresh = filter_threshold * torch.ones_like(disps.mean(dim=[1, 2]))
-
-        counts = droid_backends.depth_filter(
-            poses, disps, intrinsics[0], index, thresh
-        )
-        mask = (counts >= filter_count) & (disps > 0.25 * disps.mean())
-        valid = mask.flatten()
-
-        # print('Points from ME:', points[17])
-
-        points = torch.cat([points, colors], dim=1)
-        return points[valid].contiguous()
+    def get_points(self):
+        return self.video.get_points()

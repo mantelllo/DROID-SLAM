@@ -29,25 +29,25 @@ class FactorGraph:
         self.ht = ht = video.ht // 8
         self.wd = wd = video.wd // 8
 
-        self.coords0 = pops.coords_grid(ht, wd, device=device)
-        self.ii = torch.as_tensor([], dtype=torch.long, device=device)
-        self.jj = torch.as_tensor([], dtype=torch.long, device=device)
-        self.age = torch.as_tensor([], dtype=torch.long, device=device)
+        self.coords0 = pops.coords_grid(ht, wd, device=device).share_memory_()
+        self.ii = torch.as_tensor([], dtype=torch.long, device=device).share_memory_()
+        self.jj = torch.as_tensor([], dtype=torch.long, device=device).share_memory_()
+        self.age = torch.as_tensor([], dtype=torch.long, device=device).share_memory_()
 
         self.corr, self.net, self.inp = None, None, None
         self.damping = 1e-6 * torch.ones_like(self.video.disps)
 
-        self.target = torch.zeros([1, 0, ht, wd, 2], device=device, dtype=torch.float)
-        self.weight = torch.zeros([1, 0, ht, wd, 2], device=device, dtype=torch.float)
+        self.target = torch.zeros([1, 0, ht, wd, 2], device=device, dtype=torch.float).share_memory_()
+        self.weight = torch.zeros([1, 0, ht, wd, 2], device=device, dtype=torch.float).share_memory_()
 
         # inactive factors
-        self.ii_inac = torch.as_tensor([], dtype=torch.long, device=device)
-        self.jj_inac = torch.as_tensor([], dtype=torch.long, device=device)
-        self.ii_bad = torch.as_tensor([], dtype=torch.long, device=device)
-        self.jj_bad = torch.as_tensor([], dtype=torch.long, device=device)
+        self.ii_inac = torch.as_tensor([], dtype=torch.long, device=device).share_memory_()
+        self.jj_inac = torch.as_tensor([], dtype=torch.long, device=device).share_memory_()
+        self.ii_bad = torch.as_tensor([], dtype=torch.long, device=device).share_memory_()
+        self.jj_bad = torch.as_tensor([], dtype=torch.long, device=device).share_memory_()
 
-        self.target_inac = torch.zeros([1, 0, ht, wd, 2], device=device, dtype=torch.float)
-        self.weight_inac = torch.zeros([1, 0, ht, wd, 2], device=device, dtype=torch.float)
+        self.target_inac = torch.zeros([1, 0, ht, wd, 2], device=device, dtype=torch.float).share_memory_()
+        self.weight_inac = torch.zeros([1, 0, ht, wd, 2], device=device, dtype=torch.float).share_memory_()
 
     def __filter_repeated_edges(self, ii, jj):
         """remove duplicate edges"""
@@ -121,32 +121,32 @@ class FactorGraph:
             ix = torch.arange(len(self.age))[torch.argsort(self.age).cpu()]
             self.rm_factors(ix >= self.max_factors - ii.shape[0], store=True)
 
-        net = self.video.nets[ii].to(self.device).unsqueeze(0)
+        net = self.video.nets[ii].to(self.device).unsqueeze(0).share_memory_()
 
         # correlation volume for new edges
         if self.corr_impl == "volume":
             c = (ii == jj).long()
-            fmap1 = self.video.fmaps[ii, 0].to(self.device).unsqueeze(0)
-            fmap2 = self.video.fmaps[jj, c].to(self.device).unsqueeze(0)
+            fmap1 = self.video.fmaps[ii, 0].to(self.device).unsqueeze(0).share_memory_()
+            fmap2 = self.video.fmaps[jj, c].to(self.device).unsqueeze(0).share_memory_()
             corr = CorrBlock(fmap1, fmap2)
             self.corr = corr if self.corr is None else self.corr.cat(corr)
 
-            inp = self.video.inps[ii].to(self.device).unsqueeze(0)
+            inp = self.video.inps[ii].to(self.device).unsqueeze(0).share_memory_()
             self.inp = inp if self.inp is None else torch.cat([self.inp, inp], 1)
 
         with autocast(enabled=False):
             target, _ = self.video.reproject(ii, jj)
             weight = torch.zeros_like(target)
 
-        self.ii = torch.cat([self.ii, ii], 0)
-        self.jj = torch.cat([self.jj, jj], 0)
-        self.age = torch.cat([self.age, torch.zeros_like(ii)], 0)
+        self.ii = torch.cat([self.ii, ii], 0).share_memory_()
+        self.jj = torch.cat([self.jj, jj], 0).share_memory_()
+        self.age = torch.cat([self.age, torch.zeros_like(ii)], 0).share_memory_()
 
         # reprojection factors
         self.net = net if self.net is None else torch.cat([self.net, net], 1)
 
-        self.target = torch.cat([self.target, target], 1)
-        self.weight = torch.cat([self.weight, weight], 1)
+        self.target = torch.cat([self.target, target], 1).share_memory_()
+        self.weight = torch.cat([self.weight, weight], 1).share_memory_()
 
 
     @autocast(enabled=True)
@@ -155,10 +155,10 @@ class FactorGraph:
 
         # store estimated factors
         if store:
-            self.ii_inac = torch.cat([self.ii_inac, self.ii[mask]], 0)
-            self.jj_inac = torch.cat([self.jj_inac, self.jj[mask]], 0)
-            self.target_inac = torch.cat([self.target_inac, self.target[:,mask]], 1)
-            self.weight_inac = torch.cat([self.weight_inac, self.weight[:,mask]], 1)
+            self.ii_inac = torch.cat([self.ii_inac, self.ii[mask]], 0).share_memory_()
+            self.jj_inac = torch.cat([self.jj_inac, self.jj[mask]], 0).share_memory_()
+            self.target_inac = torch.cat([self.target_inac, self.target[:,mask]], 1).share_memory_()
+            self.weight_inac = torch.cat([self.weight_inac, self.weight[:,mask]], 1).share_memory_()
 
         self.ii = self.ii[~mask]
         self.jj = self.jj[~mask]
@@ -181,18 +181,18 @@ class FactorGraph:
     def rm_keyframe(self, ix):
         """ drop edges from factor graph """
 
-        t = self.video.counter.value
+        t = self.video.counter
         # with self.video.get_lock():
-        self.video.images[ix : t - 1] = self.video.images[ix + 1 : t].clone()
-        self.video.poses[ix : t - 1] = self.video.poses[ix + 1 : t].clone()
-        self.video.disps[ix : t - 1] = self.video.disps[ix + 1 : t].clone()
-        self.video.disps_sens[ix : t - 1] = self.video.disps_sens[ix + 1 : t].clone()
-        self.video.intrinsics[ix : t - 1] = self.video.intrinsics[ix + 1 : t].clone()
+        self.video.images[ix : t - 1] = self.video.images[ix + 1 : t].clone().share_memory_()
+        self.video.poses[ix : t - 1] = self.video.poses[ix + 1 : t].clone().share_memory_()
+        self.video.disps[ix : t - 1] = self.video.disps[ix + 1 : t].clone().share_memory_()
+        self.video.disps_sens[ix : t - 1] = self.video.disps_sens[ix + 1 : t].clone().share_memory_()
+        self.video.intrinsics[ix : t - 1] = self.video.intrinsics[ix + 1 : t].clone().share_memory_()
 
-        self.video.nets[ix : t - 1] = self.video.nets[ix + 1 : t].clone()
-        self.video.inps[ix : t - 1] = self.video.inps[ix + 1 : t].clone()
-        self.video.fmaps[ix : t - 1] = self.video.fmaps[ix + 1 : t].clone()
-        self.video.tstamp[ix: t - 1] = self.video.tstamp[ix + 1 : t].clone()
+        self.video.nets[ix : t - 1] = self.video.nets[ix + 1 : t].clone().share_memory_()
+        self.video.inps[ix : t - 1] = self.video.inps[ix + 1 : t].clone().share_memory_()
+        self.video.fmaps[ix : t - 1] = self.video.fmaps[ix + 1 : t].clone().share_memory_()
+        self.video.tstamp[ix: t - 1] = self.video.tstamp[ix + 1 : t].clone().share_memory_()
 
         m = (self.ii_inac == ix) | (self.jj_inac == ix)
         self.ii_inac[self.ii_inac >= ix] -= 1
@@ -225,13 +225,14 @@ class FactorGraph:
 
         self.net, delta, weight, damping, upmask = \
             self.update_op(self.net, self.inp, corr, motn, self.ii, self.jj)
+        self.net = self.net.share_memory_()
 
         if t0 is None:
             t0 = max(1, self.ii.min().item()+1)
 
         with autocast(enabled=False):
             self.target = coords1 + delta.to(dtype=torch.float)
-            self.weight = weight.to(dtype=torch.float)
+            self.weight = weight.to(dtype=torch.float).share_memory_()
 
             ht, wd = self.coords0.shape[0:2]
             self.damping[torch.unique(self.ii)] = damping
@@ -240,8 +241,8 @@ class FactorGraph:
                 m = (self.ii_inac >= t0 - 3) & (self.jj_inac >= t0 - 3)
                 ii = torch.cat([self.ii_inac[m], self.ii], 0)
                 jj = torch.cat([self.jj_inac[m], self.jj], 0)
-                target = torch.cat([self.target_inac[:,m], self.target], 1)
-                weight = torch.cat([self.weight_inac[:,m], self.weight], 1)
+                target = torch.cat([self.target_inac[:,m], self.target], 1).share_memory_()
+                weight = torch.cat([self.weight_inac[:,m], self.weight], 1).share_memory_()
 
             else:
                 ii, jj, target, weight = self.ii, self.jj, self.target, self.weight
@@ -249,8 +250,8 @@ class FactorGraph:
 
             damping = .2 * self.damping[torch.unique(ii)].contiguous() + EP
 
-            target = target.view(-1, ht, wd, 2).permute(0,3,1,2).contiguous()
-            weight = weight.view(-1, ht, wd, 2).permute(0,3,1,2).contiguous()
+            target = target.view(-1, ht, wd, 2).permute(0,3,1,2).contiguous().share_memory_()
+            weight = weight.view(-1, ht, wd, 2).permute(0,3,1,2).contiguous().share_memory_()
 
             # dense bundle adjustment
             self.video.ba(target, weight, damping, ii, jj, t0, t1, 
@@ -267,7 +268,7 @@ class FactorGraph:
         """ run update operator on factor graph - reduced memory implementation """
 
         # alternate corr implementation
-        t = self.video.counter.value
+        t = self.video.counter
 
         num, rig, ch, ht, wd = self.video.fmaps.shape
         corr_op = AltCorrBlock(self.video.fmaps.view(1, num*rig, ch, ht, wd))
@@ -347,7 +348,7 @@ class FactorGraph:
     ):
         """add edges to the factor graph based on distance"""
 
-        t = self.video.counter.value
+        t = self.video.counter
         ix = torch.arange(t0, t)
         jx = torch.arange(t1, t)
 

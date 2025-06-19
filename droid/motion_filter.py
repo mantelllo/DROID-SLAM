@@ -21,7 +21,6 @@ class MotionFilter:
     """ This class is used to filter incoming frames and extract features """
 
     def __init__(self, net, video: DepthVideo, thresh=2.5, device="cuda"):
-        
         # split net modules
         self.cnet = net.cnet
         self.fnet = net.fnet
@@ -91,7 +90,7 @@ class MotionFilter:
     @autocast(enabled=True)
     @torch.no_grad()
     def add_keyframe_if_meets_condition(self, image, tstamp, fmap1, net1, inp1, delta, weight):
-        if self.video.counter.value == 0:
+        if self.video.counter == 0:
             self.net, self.inp, self.fmap = net1, inp1, fmap1
             Id = lietorch.SE3.Identity(1, ).data.squeeze()
             i = self.video.append(tstamp, image, Id, 1.0, None,
@@ -125,10 +124,10 @@ class MotionFilter:
         fmap1 = self.__feature_encoder(inputs)
 
         ### always add first frame ###
-        if self.video.counter.value == 0:
+        if self.video.counter == 0:
             net1, inp1 = self.__context_encoder(inputs[:,[0]])
             self.net, self.inp, self.fmap = net1, inp1, fmap1
-            Id = lietorch.SE3.Identity(1, ).data.squeeze()
+            Id = lietorch.SE3.Identity(1, ).data.squeeze().to(self.device)
             i = self.video.append(tstamp, image[0], Id, 1.0, depth, intrinsics / 8.0, fmap1, net1[0], inp1[0])
             self.added += 1
             return True
