@@ -195,11 +195,10 @@ class DepthVideo:
     def normalize(self):
         """ normalize depth and poses """
 
-        with self.get_lock():
-            s = self.disps[:self.counter].mean()
-            self.disps[:self.counter] /= s
-            self.poses[:self.counter,:3] *= s
-            self.dirty[:self.counter] = True
+        s = self.disps[:self.counter].mean()
+        self.disps[:self.counter] /= s
+        self.poses[:self.counter,:3] *= s
+        self.dirty[:self.counter] = True
 
     def remove(self, ix):
         t = self.counter

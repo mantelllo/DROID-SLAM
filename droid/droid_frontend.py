@@ -65,15 +65,12 @@ class DroidFrontend:
     def _update(self):
         """add edges, perform update"""
 
-        print('Running DroidFrontend._update')
-
         self.count += 1
         self.t1 += 1
 
         if self.graph.corr is not None:
             self.graph.rm_factors(self.graph.age > self.max_age, store=True)
 
-        torch.cuda.empty_cache()
         self.graph.add_proximity_factors(
             self.t1 - 5,
             max(self.t1 - self.frontend_window, 0),
@@ -93,7 +90,6 @@ class DroidFrontend:
 
         for itr in range(self.iters1):
             self.graph.update(None, None, use_inactive=True)
-            torch.cuda.empty_cache()
 
         # set initial pose for next frame
         d = self.video.distance(
@@ -109,7 +105,6 @@ class DroidFrontend:
 
         else:
             for itr in range(self.iters2):
-                torch.cuda.empty_cache()
                 self.graph.update(None, None, use_inactive=True)
 
 
@@ -121,8 +116,6 @@ class DroidFrontend:
 
         # update visualization
         self.video.dirty[self.graph.ii.min() : self.t1] = True
-        torch.cuda.empty_cache()
-        import gc; gc.collect()
 
     def _initialize(self):
         """initialize the SLAM system"""

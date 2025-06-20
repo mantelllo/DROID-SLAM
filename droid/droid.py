@@ -20,11 +20,11 @@ from torch.multiprocessing import Process
 
 
 class Droid:
-    def __init__(self, droidnet: DroidNet, args):
+    def __init__(self, droidnet: DroidNet, args, worker_idx: int = None):
         super(Droid, self).__init__()
         self.net = droidnet
         self.args = args
-        self.disable_vis = args.disable_vis
+        self.disable_vis = bool(worker_idx > 0) or args.disable_vis
 
         # store images, depth, poses, intrinsics (shared between processes)
         self.video = DepthVideo(args.image_size, args.buffer, stereo=args.stereo)

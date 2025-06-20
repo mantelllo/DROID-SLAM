@@ -1,3 +1,4 @@
+import threading
 from functools import partial
 from typing import List, Optional, Tuple
 
@@ -51,7 +52,7 @@ class VectorDroid:
         # prep
         w, h = self.args.image_size = [images.shape[2], images.shape[3]]
         if not self.droids:
-            self.droids = [Droid(self.net, self.args) for _ in range(self.num_instances)]
+            self.droids = [Droid(self.net, self.args, idx) for idx in range(self.num_instances)]
         [d.filterx.prepare_for_image_size(w, h, self.intrinsics) for d in self.droids]
 
         filterx = self.droids[0].filterx
@@ -96,6 +97,8 @@ class VectorDroid:
               # f' - duration_total_async {duration_total_async:.2f}s [cum {self.duration_total_async:.2f}s]'
               )
 
+        log_mem(tstamp)
+
         return poses, points
 
     def collect_status(self):
@@ -109,7 +112,6 @@ class VectorDroid:
             poses.append(d.get_poses())
             points.append(d.get_points())
 
-        poses = torch.stack(poses).squeeze(1)
         return poses, points
 
     def add_keyframes_if_meets_conditions(self, images, tstamp, fmaps1, nets1, inps1, deltas, weights):
@@ -152,21 +154,48 @@ class VectorDroid:
         frontends = [d.frontend for d in self.droids if d.activated]
         data = list(enumerate(was_frame_added__vector))
 
-        for item in data:
-            idx, added = item
-            if added:
-                with torch.no_grad():
-                    frontends[idx]()
+        mode = 'sequential'
 
-        # if self.pool is None:
-        #     ctx = mp.get_context("spawn")  # always spawn
-        #     self.pool = ctx.Pool(
-        #         processes=len(frontends),
-        #         initializer=init__frontend,     # ← no lambda
-        #         initargs=(frontends,)           # sent only once
-        # )
-        #
-        # self.pool.map(worker__frontend, data)
+        if mode == 'sequential':
+            for item in data:
+                idx, added = item
+                if added:
+                    with torch.no_grad():
+                        frontends[idx]()
+
+        if mode == 'threads':
+            streams = [torch.cuda.Stream(self.device) for _ in range(10)]
+            results = [None] * 10
+
+            def worker(idx: int, added: bool):
+                print(f'HELLO from thread #{idx}')
+                if added:
+                    # print(f'WORKING #{idx}')
+                    with torch.no_grad(), torch.cuda.stream(streams[idx]):
+                        results[idx] = self.droids[idx].frontend()
+                torch.cuda.empty_cache()
+                # print(f'FINISHED from thread #{idx}')
+
+            # launch 10 threads on 10 streams
+            threads = []
+            for item in data:
+                t = threading.Thread(target=worker, args=(*item,), daemon=True)
+                t.start()
+                threads.append(t)
+            for t in threads:
+                t.join()
+
+        if mode == 'mp':
+            print()
+            if self.pool is None:
+                ctx = mp.get_context("spawn")  # always spawn
+                self.pool = ctx.Pool(
+                    processes=len(frontends),
+                    initializer=init__frontend,     # ← no lambda
+                    initargs=(frontends,)           # sent only once
+            )
+
+            self.pool.map(worker__frontend, data)
 
 
 __frontends = []
@@ -180,7 +209,15 @@ def worker__frontend(item):
     if added:
         with torch.no_grad():
             __frontends[idx]()          # uses its own CUDA buffers
-        torch.cuda.empty_cache()        # free scratch space
+        # torch.cuda.empty_cache()        # free scratch space
+
+
+def log_mem(step: int):
+    device = 'cuda:0'
+    torch.cuda.synchronize(device)   # wait for all streams/kernels
+    used = torch.cuda.memory_allocated(device) / 2**30
+    resv = torch.cuda.memory_reserved(device)  / 2**30
+    print(f"[Step {step:2d}]  allocated={used:5.2f} GiB   reserved={resv:5.2f} GiB")
 
 
 def extract_intrinsics_from_proj_matrix(P, width, height):

@@ -1,3 +1,7 @@
+import os
+# os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:64,garbage_collection_threshold:0.7'
+
+
 import multiprocessing as mp
 import torch.multiprocessing as tmp
 
@@ -8,12 +12,9 @@ for ctx in (mp, tmp):          # stdlib and Torch wrapper
         pass                   # start-method was already set
 
 
-import sys
 import numpy as np
-import open3d as o3d
 from tqdm import tqdm
 import torch
-from scipy.spatial.transform import Rotation as R
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
@@ -37,7 +38,7 @@ def main():
     # torch.multiprocessing.set_start_method('fork', force=True)
     torch.autograd.set_grad_enabled(False)
 
-    num_instances = 5
+    num_instances = 4
     droidvec = VectorDroid(num_instances, args, None)
 
     poses = []

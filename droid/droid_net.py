@@ -117,8 +117,6 @@ class UpdateModule(nn.Module):
     @autocast(enabled=True)
     def forward(self, net, inp, corr, flow=None, ii=None, jj=None):
         """ RaftSLAM update operator """
-        torch.cuda.empty_cache()
-
         batch, num, ch, ht, wd = net.shape
 
         if flow is None:

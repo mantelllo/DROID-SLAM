@@ -45,7 +45,7 @@ class DroidVisualizer(OrbitDragCameraWindow):
     _depth_video1 = None
     _depth_video2 = None
 
-    _refresh_rate = 5
+    _refresh_rate = 2
     _filter_threshold = 0.02
     _filter_count = 2
 
@@ -176,7 +176,7 @@ class DroidVisualizer(OrbitDragCameraWindow):
 
         t = self._depth_video1.counter
 
-        if t > 12 and self.count % self._refresh_rate == 0:
+        if t > 3 and self.count % self._refresh_rate == 0:
             self.draw_frame__camera_frustums(t)
             self.draw_frame__points(t)
 
